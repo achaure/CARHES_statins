@@ -8,10 +8,6 @@ pacman::p_load(
   splitstackshape
 )
 
-
-load("datos/basesCARHES.Rdata")
-load("datos/ensayos_itt")
-
 crear_base_protocolo <- function(
     base_itt,
     base_farma,
@@ -50,6 +46,7 @@ crear_base_protocolo <- function(
            iniciador = 0) %>%
     select(patient_id, fecha_interrupcion, iniciador)
   
+  
   interrupciones <- bind_rows(interrupciones, inicios)
   
   base <- base %>%
@@ -59,6 +56,19 @@ crear_base_protocolo <- function(
     distinct(patient_id, fecha_inicio, .keep_all = TRUE) %>%
     # Ajustar la fecha de fin según la fecha de interrupción
     mutate(fecha_fin = pmin(fecha_fin, fecha_interrupcion, na.rm = TRUE))
+  
+  interrup_pac <- filter(base, !is.na(fecha_interrupcion))
+  inician <- filter(interrup_pac, iniciador == 0) %>%
+    distinct(patient_id, .keep_all = TRUE) %>%
+    nrow()
+  dejan <- filter(interrup_pac, iniciador == 1) %>%
+    distinct(patient_id, .keep_all = TRUE) %>%
+    nrow()
+  desviaciones <- data.frame(v1 = c(inician, dejan))
+  row.names(desviaciones) <- c("No iniciadores que inician tratamiento: ", "Iniciadores que abandonan el tratamiento: ")
+  names(desviaciones) <- NULL
+  
+  print(desviaciones)
   
   fechas_no_eventos <- c("fecha_inicio", "fecha_fin", "fecha_interrupcion")
   fechas_totales <- names(base_itt)[which(grepl("fecha_", names(base_itt)))]
@@ -151,7 +161,7 @@ confusores_1_prot <- confusores_1[c("ldl", "hdl", "colest", "nhdl", "glucosa", "
 base_larga_trabajo <- crear_base_protocolo(
   base_itt = base_trabajo,
   base_farma = DispensacionC10_HL,
-  base_confusores_1 = confusores_1_prot_2,
+  base_confusores_1 = confusores_1_prot,
   base_confusores_2 = confusores_2,
   gap_max = 61)
 

@@ -58,6 +58,8 @@ analisis_tte <- function(
     confusores,
     titulos_tabla,
     formulas,
+    limite = 0, 
+    seguimiento, 
     n_muestras = 500,
     formula_grafico = length(formulas),
     tipo_grafico = "risk"
@@ -447,8 +449,8 @@ analisis_tte <- function(
       )
       
       # Predigo resultados en base en blanco
-      trat0 <- data.frame(cbind(seq(0, 60),0,(seq(0, 60))^2))
-      trat1 <- data.frame(cbind(seq(0, 60),1,(seq(0, 60))^2))
+      trat0 <- data.frame(cbind(seq(0, seguimiento),0,(seq(0, seguimiento))^2))
+      trat1 <- data.frame(cbind(seq(0, seguimiento),1,(seq(0, seguimiento))^2))
       
       colnames(trat0) <- c("tiempo", "iniciador", "tiemposq")
       colnames(trat1) <- c("tiempo", "iniciador", "tiemposq")
@@ -481,17 +483,21 @@ analisis_tte <- function(
       resultados_plr <- function(n){
         var_peso <- paste0("peso_", n)
         
+        # recorto los pesos extremos
+        base_larga_rec <- base_larga[which(base_larga[[var_peso]] <= quantile(base_larga[[var_peso]], 1-limite) &
+                                             quantile(base_larga[[var_peso]], limite) <= base_larga[[var_peso]]),]
+        
         # Regresión
         modelo_hazards <- glm(
           evento == 0 ~ iniciador + I(iniciador*tiempo) + I(iniciador*tiemposq) + tiempo + tiemposq, 
           family = binomial(),
-          weights = base_larga[[var_peso]],
-          data = base_larga
+          weights = base_larga_rec[[var_peso]],
+          data = base_larga_rec
         )
         
         # Predigo resultados en base en blanco
-        trat0 <- data.frame(cbind(seq(0, 60),0,(seq(0, 60))^2))
-        trat1 <- data.frame(cbind(seq(0, 60),1,(seq(0, 60))^2))
+        trat0 <- data.frame(cbind(seq(0, seguimiento),0,(seq(0, seguimiento))^2))
+        trat1 <- data.frame(cbind(seq(0, seguimiento),1,(seq(0, seguimiento))^2))
         
         colnames(trat0) <- c("tiempo", "iniciador", "tiemposq")
         colnames(trat1) <- c("tiempo", "iniciador", "tiemposq")
@@ -647,6 +653,11 @@ analisis_tte <- function(
                                         base_larga[["evento"]])
     }
     
+    # recorto los pesos extremos
+    base_larga <- base_larga %>%
+      filter(peso <= quantile(peso, 1-limite),
+             quantile(peso, limite) <= peso)
+    
     
     # Ajusto el modelo de regresión
     modelo_hazards <- glm(
@@ -658,8 +669,8 @@ analisis_tte <- function(
     
     
     # Aplico los resultados a la base en blanco
-    trat0 <- data.frame(cbind(seq(0, 60),0,(seq(0, 60))^2))
-    trat1 <- data.frame(cbind(seq(0, 60),1,(seq(0, 60))^2))
+    trat0 <- data.frame(cbind(seq(0, seguimiento),0,(seq(0, seguimiento))^2))
+    trat1 <- data.frame(cbind(seq(0, seguimiento),1,(seq(0, seguimiento))^2))
     
     colnames(trat0) <- c("tiempo", "iniciador", "tiemposq")
     colnames(trat1) <- c("tiempo", "iniciador", "tiemposq")
@@ -683,7 +694,7 @@ analisis_tte <- function(
         geom_line(aes(y = risk0, colour = "Non-initiators")) +
         geom_line(aes(y = risk1, colour = "Initiators")) +
         xlab("Months") +
-        scale_x_continuous(limits = c(0, 60), breaks=seq(0,60,12)) +
+        scale_x_continuous(limits = c(0, seguimiento), breaks=seq(0,seguimiento,12)) +
         scale_y_continuous(limits=c(0, max(c(graf_hazards$risk0, graf_hazards$risk1)) + 0.1),
                            breaks=seq(0, max(c(graf_hazards$risk0, graf_hazards$risk1)) + 0.1, 0.1)) +
         ylab("Risk") +
@@ -697,7 +708,7 @@ analisis_tte <- function(
         geom_line(aes(y = surv0, colour = "Non-initiators")) +
         geom_line(aes(y = surv1, colour = "Initiators")) +
         xlab("Months") +
-        scale_x_continuous(limits = c(0, 60), breaks=seq(0,60,12)) +
+        scale_x_continuous(limits = c(0, seguimiento), breaks=seq(0,seguimiento,12)) +
         scale_y_continuous(limits=c(min(c(graf_hazards$surv0, graf_hazards$surv1)) - 0.1, 1),
                            breaks=seq(min(c(graf_hazards$surv0, graf_hazards$surv1)) - 0.1, 1, 0.1)) +
         ylab("Survival") +
@@ -721,8 +732,6 @@ analisis_tte <- function(
   
 }
 
-lista <- ls()
-
 ba <- base_trabajo
 bp <- base_perdidas
 c <- confusores
@@ -730,8 +739,8 @@ tt <- titulos_tabla
 f <- formulas
 n <- n_muestras
 fg <- 2
+segui <- 40
 
-rm(list = lista)
 
 # 3. Aplico la función ----------------------------------------------------
 resultados <- analisis_tte(
@@ -740,6 +749,8 @@ resultados <- analisis_tte(
   confusores = c,
   titulos_tabla = tt,
   formulas = f,
+  limite = 0,
+  seguimiento = 60, 
   n_muestras = 5,
   formula_grafico = fg,
   tipo_grafico = "risk"

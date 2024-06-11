@@ -9,49 +9,78 @@ pacman::p_load(
   splitstackshape
 )
 
-base <- base_larga_trabajo
-
+base_analisis <- base_larga_trabajo
 limite <- .01
-muestras <- 5
+n_muestras <- 5
 
 load("datos/ensayos_itt")
 load("datos/base_prueba")
 load("original/Indice_HL.RDAta")
-analisis_prot <- function(base, muestras = 500){
-  analisis_descriptivo_prot <- function(base){
+
+ft <- 
+  "iniciador ~ sexo_fem + 
+  edad + I(edad*edad) + 
+  ldl_t + I(ldl_t*ldl_t) +
+  hdl_t + I(hdl_t*hdl_t) +
+  colest_t + I(colest_t*colest_t) +
+  glucosa_t + I(glucosa_t*glucosa_t) +
+  n_analiticas_t + I(n_analiticas_t * n_analiticas_t) +
+  diabetes_t + hta_t + as.factor(cohorte)"
+
+fc <- 
+  "cens == 0 ~ sexo_fem + 
+  edad + I(edad*edad) + 
+  ldl_t + I(ldl_t*ldl_t) +
+  hdl_t + I(hdl_t*hdl_t) +
+  colest_t + I(colest_t*colest_t) +
+  glucosa_t + I(glucosa_t*glucosa_t) +
+  n_analiticas_t + I(n_analiticas_t * n_analiticas_t) +
+  diabetes_t + hta_t + as.factor(cohorte)"
+
+analisis_prot <- function(
+    base_analisis, 
+    formula_trat,
+    formula_cens,
+    limite = 0, 
+    seguimiento, 
+    n_muestras = 500,
+    formula_grafico = length(formulas),
+    tipo_grafico = "risk"
+    ){
+  analisis_descriptivo_prot <- function(base_analisis){
     
     # RESTO DESCRIPTIVO
     # Eventos totales
-    et_1 <- base %>%
+    et_1 <- base_analisis %>%
       filter(evento == 1) %>%
       filter(iniciador == 1) %>%
       nrow()
     
-    et_0 <- base %>%
+    et_0 <- base_analisis %>%
       filter(evento == 1) %>%
       filter(iniciador == 0) %>%
       nrow()
     
     # eventos reales
-    er_1 <- base %>%
+    er_1 <- base_analisis %>%
       filter(evento == 1) %>%
       filter(iniciador == 1) %>%
       distinct(patient_id) %>%
       nrow()
     
-    er_0 <- base %>%
+    er_0 <- base_analisis %>%
       filter(evento == 1) %>%
       filter(iniciador == 0) %>%
       distinct(patient_id) %>%
       nrow()
     
     # Tiempo de seguimiento
-    t_1 <- base %>%
+    t_1 <- base_analisis %>%
       distinct(patient_id, fecha_inicio, .keep_all = TRUE) %>%
       filter(iniciador == 1) %>%
       {paste0(median(.$seguim), " (", quantile(.$seguim, .25), "-", quantile(.$seguim, .75), ")")}
     
-    t_0 <- base %>%
+    t_0 <- base_analisis %>%
       distinct(patient_id, fecha_inicio, .keep_all = TRUE) %>%
       filter(iniciador == 0) %>%
       {paste0(median(.$seguim), " (", quantile(.$seguim, .25), "-", quantile(.$seguim, .75), ")")}
@@ -71,91 +100,58 @@ analisis_prot <- function(base, muestras = 500){
     
   }
   
-  descriptivo <- analisis_descriptivo_prot(base)
+  descriptivo <- analisis_descriptivo_prot(base_analisis)
   
-  analisis_prot_tte <- function(base, muestras){
+  analisis_prot_tte <- function(base_analisis, n_muestras){
     
     funcion_boot <- function(base, indices) {
       
-      # Obtener los identificadores únicos de los pacientes
       patient_ids_unicos <- unique(base$patient_id)
-      
-      # Convertir índices en identificadores de pacientes seleccionados
       muestra_patient_ids <- patient_ids_unicos[indices]
-      
-      # Filtrar los datos para incluir solo los sujetos seleccionados
       b <- base %>% filter(patient_id %in% muestra_patient_ids)
       
       b <- b %>%
         mutate(cohorte = year(fecha_inicio))
-      
-      # CALCULO LOS PESOS DEL TRATAMIENTO
-      
+
+
+      # Calculo y añado los pesos de tratamiento
       base_corta <- filter(b, tiempo == 0)
       
-      # estimo el denominador 
-      p_denom_2 <- glm(iniciador ~ sexo_fem + 
-                         edad + I(edad*edad) + 
-                         ldl_t + I(ldl_t*ldl_t) +
-                         hdl_t + I(hdl_t*hdl_t) +
-                         colest_t + I(colest_t*colest_t) +
-                         nhdl_t + I(nhdl_t*nhdl_t) +
-                         glucosa_t + I(glucosa_t*glucosa_t) +
-                         n_analiticas_t + I(n_analiticas_t * n_analiticas_t) +
-                         diabetes_t + 
-                         as.factor(cohorte) +
-                         hta_t,
-                       data = base_corta, family = binomial())
-      
-      # estimo el numerador
+      p_denom <- glm(formula_trat, data = base_corta, family = binomial())
       p_num <- glm(iniciador ~ 1, data = base_corta, family = binomial())
       
-      # Calculo los pesos
       base_corta <- base_corta %>%
-        {mutate(., pd_trat_2 = predict(p_denom_2, ., type = "response"),
-                pn_trat = predict(p_num, ., type = "response"))} %>%
-        mutate( pes_2 = if_else(iniciador == 1, 
-                               pn_trat/pd_trat_2, 
-                               (1-pn_trat)/(1-pd_trat_2))) %>%
-        select(patient_id, fecha_inicio, pes_2)
+        {mutate(., denom = predict(p_denom, ., type = "response"),
+                num = predict(p_num, ., type = "response"))} %>%
+        mutate(peso_trat = if_else(iniciador == 1, 
+                                   num/denom, 
+                                   (1 - num)/(1 - denom))) %>%
+        select(patient_id, fecha_inicio, peso_trat)
       
       base_larga <- b %>%
         left_join(base_corta, by = c("patient_id", "fecha_inicio"))
       
+      # Calculo y añado los pesos de la censura
       
-      # Calculo los pesos de la censura
-      # Identifico las censuras
-      
+      # 1. Identifico las censuras
       base_larga <- base_larga %>%
-        mutate(cens = if_else(tiempo == seguim - 1 & evento == 0 & fecha_fin != max(fecha_fin),
+        mutate(cens = if_else(tiempo == seguim - 1 & 
+                                evento == 0 & 
+                                fecha_fin != max(fecha_fin),
                               1, 0))
       
-      # estimo el denominador 
-      p_denom_c <- glm(cens == 0 ~ sexo_fem + 
-                         edad + I(edad*edad) + 
-                         ldl_t + I(ldl_t*ldl_t) +
-                         hdl_t + I(hdl_t*hdl_t) +
-                         colest_t + I(colest_t*colest_t) +
-                         nhdl_t + I(nhdl_t*nhdl_t) +
-                         glucosa_t + I(glucosa_t*glucosa_t) +
-                         n_analiticas_t + I(n_analiticas_t * n_analiticas_t) +
-                         diabetes_t + 
-                         as.factor(cohorte) +
-                         hta_t,
-                       data = base_larga, family = binomial())
-      
-      # estimo el numerador
+      # 2. Calculo los pesos 
+      p_denom_c <- glm(formula_cens, data = base_larga, family = binomial())
       p_num_c <- glm(cens == 0 ~ 1, data = base_larga, family = binomial())
       
-      # Calculo los pesos
       base_larga <- base_larga %>%
-        {mutate(., pd_c = predict(p_denom_c, ., type = "response"),
-                pn_c = predict(p_num_c, ., type = "response"))} %>%
-        mutate( pes_c = if_else(cens == 0, 
-                                pn_c/pd_c, 
-                                (1-pn_c)/(1-pd_c))) %>%
-        mutate(pes_c = cumprod(pes_c), .by = c("patient_id", "fecha_inicio"),
-               peso = pes_c * pes_2) 
+        {mutate(., denom = predict(p_denom_c, ., type = "response"),
+                num = predict(p_num_c, ., type = "response"))} %>%
+        mutate(peso_cens = if_else(cens == 0, 
+                                num/denom, 
+                                (1-num)/(1-denom))) %>%
+        mutate(peso_cens = cumprod(peso_cens), .by = c("patient_id", "fecha_inicio"),
+               peso = peso_trat * peso_cens) 
       
       # recorto los pesos extremos
       base_larga <- base_larga %>%
@@ -169,8 +165,8 @@ analisis_prot <- function(base, muestras = 500){
         data = base_larga
       )
       
-      trat0 <- data.frame(cbind(seq(0, 60),0,(seq(0, 60))^2))
-      trat1 <- data.frame(cbind(seq(0, 60),1,(seq(0, 60))^2))
+      trat0 <- data.frame(cbind(seq(0, seguimiento),0,(seq(0, seguimiento))^2))
+      trat1 <- data.frame(cbind(seq(0, seguimiento),1,(seq(0, seguimiento))^2))
       
       colnames(trat0) <- c("tiempo", "iniciador", "tiemposq")
       colnames(trat1) <- c("tiempo", "iniciador", "tiemposq")
@@ -210,7 +206,7 @@ analisis_prot <- function(base, muestras = 500){
       return(c(r0, r1, rr, rd))
       }
     set.seed(1234)
-    boot_results <- boot(data = base, statistic = funcion_boot, R = muestras)
+    boot_results <- boot(data = base_analisis, statistic = funcion_boot, R = n_muestras)
     
     v1 <- c("Analisis por protocolo")
     v2 <- boot_results$t0[1]
@@ -256,93 +252,18 @@ analisis_prot <- function(base, muestras = 500){
     tabla
     
   }
-  prot <- analisis_prot_tte(base, muestras)
-  
-  
-  # grafico_ajustado <- function(base){
-  #   
-  #   # La única diferencia entre ajustado o no ajustado son los pesos. Así que meto todos los
-  #   # pesos en una única base y luego analizo con o sin pesos.
-  #   base <- base %>%
-  #     mutate(cohorte = year(fecha_inicio))  
-  #   
-  #   
-  #   # estimo el denominador del ajuste
-  #   p_denom_2 <- glm(iniciador ~ sexo_fem + 
-  #                      edad + I(edad*edad) + 
-  #                      ldl_t + I(ldl_t*ldl_t) +
-  #                      hdl_t + I(hdl_t*hdl_t) +
-  #                      colest_t + I(colest_t*colest_t) +
-  #                      nhdl_t + I(nhdl_t*nhdl_t) +
-  #                      glucosa_t + I(glucosa_t*glucosa_t) +
-  #                      n_analiticas_t + I(n_analiticas_t * n_analiticas_t) +
-  #                      diabetes_t + 
-  #                      hta_t +
-  #                      as.factor(cohorte),
-  #                    data = base, family = binomial())
-  #   
-  #   # estimo el numerador
-  #   p_num <- glm(iniciador ~ 1, data = base, family = binomial())
-  #   
-  #   # Calculo los pesos
-  #   base <- base %>%
-  #     {mutate(., pd_trat_2 = predict(p_denom_2, ., type = "response"),
-  #             pn_trat = predict(p_num, ., type = "response"))} %>%
-  #     mutate(pes_2 = if_else(iniciador == 1, 
-  #                            pn_trat/pd_trat_2, 
-  #                            (1-pn_trat)/(1-pd_trat_2)))
-  #   
-  #   base_larga <- base %>%
-  #     mutate(seguim = as.numeric(round((fecha_fin - fecha_inicio)/30.4375)),
-  #            id = paste0(patient_id, fecha_inicio)) %>%
-  #     expandRows("seguim", drop = FALSE) %>%
-  #     {mutate(., tiempo = sequence(rle(.$id)$lengths)-1)} %>%
-  #     mutate(evento = if_else(tiempo == seguim - 1 & (iam == 1 | ictus == 1),
-  #                             1, 0),
-  #            tiemposq = tiempo^2)
-  #   
-  #   modelo_hazards <- glm(
-  #     evento == 0 ~ iniciador + I(iniciador*tiempo) + I(iniciador*tiemposq) + tiempo + tiemposq, 
-  #     family = binomial(),
-  #     weights = pes_2,
-  #     data = base_larga
-  #   )
-  #   
-  #   trat0 <- data.frame(cbind(seq(0, 60),0,(seq(0, 60))^2))
-  #   trat1 <- data.frame(cbind(seq(0, 60),1,(seq(0, 60))^2))
-  #   
-  #   colnames(trat0) <- c("tiempo", "iniciador", "tiemposq")
-  #   colnames(trat1) <- c("tiempo", "iniciador", "tiemposq")
-  #   
-  #   trat0 <- trat0 %>%
-  #     {mutate(., p_noevent0 = predict(modelo_hazards, ., type = "response"))} %>%
-  #     mutate(surv0 = cumprod(p_noevent0),
-  #            risk0 = 1 - surv0)
-  #   
-  #   trat1 <- trat1 %>%
-  #     {mutate(., p_noevent1 = predict(modelo_hazards, ., type = "response"))} %>%
-  #     mutate(surv1 = cumprod(p_noevent1),
-  #            risk1 = 1 - surv1)
-  #   
-  #   graf_hazards <- merge(trat0, trat1, by = c("tiempo", "tiemposq"))
-  #   
-  #   ggplot(graf_hazards, aes(x = tiempo, y = risk)) +
-  #     geom_line(aes(y = risk0, colour = "Non-initiators")) +
-  #     geom_line(aes(y = risk1, colour = "Initiators")) +
-  #     xlab("Months") +
-  #     scale_x_continuous(limits = c(0, 60), breaks=seq(0,60,12)) +
-  #     scale_y_continuous(limits=c(0, max(c(graf_hazards$risk0, graf_hazards$risk1)) + 0.1),
-  #                        breaks=seq(0, max(c(graf_hazards$risk0, graf_hazards$risk1)) + 0.1, 0.1)) +
-  #     ylab("Risk") +
-  #     ggtitle("Cumulative risk from hazards model") +
-  #     labs(colour="A:") +
-  #     theme_bw() +
-  #     theme(legend.position="bottom")
-  # }
-  # graf <- grafico_ajustado(base)
-  
+  prot <- analisis_prot_tte(base_analisis, n_muestras)
+
   return(list(descriptivo = descriptivo, 
               Protocolo = prot))
   
 }
-resultados <- analisis_prot(base_larga_trabajo, 10)
+
+resultados <- analisis_prot(
+  base_analisis = base_larga_trabajo,
+  formula_trat = ft,
+  formula_cens = fc,
+  limite = 0.01,
+  seguimiento = 60,
+  n_muestras = 5
+  )
